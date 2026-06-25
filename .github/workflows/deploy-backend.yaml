@@ -1,0 +1,97 @@
+name: Deploy Backend On Amazon AWS EC2 Server
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "backend/**"
+      - ".github/workflows/deploy-backend.yaml"
+
+jobs:
+
+  # ─────────────────────────────────────────
+  # 1. BUILD + PUSH TO DOCKER HUB (CI)
+  # ─────────────────────────────────────────
+  build-backend:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Login Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build Docker Image
+        run: |
+          docker build \
+            -t ${{ secrets.DOCKER_USERNAME }}/todo-backend:latest \
+            -t ${{ secrets.DOCKER_USERNAME }}/todo-backend:${{ github.sha }} \
+            ./backend
+
+      - name: Push Docker Image to Docker Hub
+        run: |
+          docker push ${{ secrets.DOCKER_USERNAME }}/todo-backend:latest
+          docker push ${{ secrets.DOCKER_USERNAME }}/todo-backend:${{ github.sha }}
+
+  # ─────────────────────────────────────────
+  # 2. DEPLOY TO EC2 (CD)
+  # ─────────────────────────────────────────
+  deploy-backend:
+    runs-on: ubuntu-latest
+    needs: build-backend   # 👈 IMPORTANT DEPENDENCY
+
+    steps:
+      - name: Deploy to EC2 via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USERNAME }}
+          key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+          port: 22
+
+          script: |
+            set -e
+
+            echo "────────────────────────────"
+            echo " Pulling latest image"
+            echo "────────────────────────────"
+
+            docker pull ${{ secrets.DOCKER_USERNAME }}/todo-backend:latest
+
+            echo "────────────────────────────"
+            echo " Stopping old container"
+            echo "────────────────────────────"
+
+            docker stop backend-app 2>/dev/null || true
+            docker rm backend-app 2>/dev/null || true
+
+            echo "────────────────────────────"
+            echo " Starting new container"
+            echo "────────────────────────────"
+
+            docker run -d \
+              --name backend-app \
+              --restart unless-stopped \
+              -p 5000:5000 \
+              --env-file /home/${{ secrets.EC2_USERNAME }}/.env \
+              ${{ secrets.DOCKER_USERNAME }}/todo-backend:latest
+
+            echo "────────────────────────────"
+            echo " Cleaning unused images"
+            echo "────────────────────────────"
+
+            docker image prune -f
+
+            echo "────────────────────────────"
+            echo " Verifying container"
+            echo "────────────────────────────"
+
+            docker ps
+            docker logs backend-app --tail 50
+
+            echo "✅ Deployment successful"
