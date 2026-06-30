@@ -77,7 +77,7 @@ jobs:
             docker run -d \
               --name backend-app \
               --restart unless-stopped \
-              -p 4000:5000 \
+              -p 4000:4000 \
               --env-file /home/${{ secrets.EC2_USERNAME }}/.env \
               ${{ secrets.DOCKER_USERNAME }}/todo-backend:latest
 
